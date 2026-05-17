@@ -87,6 +87,21 @@ public struct CameraOCRView: View {
         self.onResult = onResult
     }
 
+    public init(
+        capturedImageURL: Binding<URL?> = .constant(nil),
+        ocrResult: Binding<OCRResult?>,
+        processor: VisionOCRProcessor = VisionOCRProcessor(),
+        onResult: @escaping @MainActor (OCRResult) -> Void
+    ) {
+        self.init(
+            capturedImageURL: capturedImageURL,
+            ocrResult: ocrResult,
+            processor: processor,
+            onCapture: nil,
+            onResult: onResult
+        )
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             CameraCaptureView(capturedImage: $capturedImage, capturedImageURL: $capturedImageURL) { image in

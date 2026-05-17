@@ -92,6 +92,15 @@ public final class AudioRecorder: NSObject, ObservableObject {
     }
 
     @discardableResult
+    public func startRecordingWithPermission(
+        to url: URL? = nil,
+        configuration: AudioRecordingConfiguration = AudioRecordingConfiguration()
+    ) async throws -> URL {
+        try await PermissionCenter.require(.microphone)
+        return try startRecording(to: url, configuration: configuration)
+    }
+
+    @discardableResult
     public func stopRecording() -> URL? {
         guard isRecording else {
             return currentRecordingURL

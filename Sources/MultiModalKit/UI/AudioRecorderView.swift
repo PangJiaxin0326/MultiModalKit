@@ -6,6 +6,7 @@ public struct AudioRecorderView: View {
 
     @StateObject private var recorder = AudioRecorder()
     @State private var errorMessage: String?
+    @State private var isProcessing = false
 
     private let configuration: AudioRecordingConfiguration
     private let onFinish: (@MainActor (URL) -> Void)?
@@ -23,13 +24,16 @@ public struct AudioRecorderView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
-                toggleRecording()
+                Task {
+                    await toggleRecording()
+                }
             } label: {
                 Label(
                     recorder.isRecording ? "Stop Recording" : "Record",
                     systemImage: recorder.isRecording ? "stop.circle.fill" : "mic.circle.fill"
                 )
             }
+            .disabled(isProcessing)
 
             if let errorMessage {
                 Text(errorMessage)
@@ -44,7 +48,14 @@ public struct AudioRecorderView: View {
         }
     }
 
-    private func toggleRecording() {
+    private func toggleRecording() async {
+        guard !isProcessing else {
+            return
+        }
+
+        isProcessing = true
+        defer { isProcessing = false }
+
         do {
             if recorder.isRecording {
                 guard let url = recorder.stopRecording() else {
@@ -53,7 +64,7 @@ public struct AudioRecorderView: View {
                 recordingURL = url
                 onFinish?(url)
             } else {
-                try recorder.startRecording(configuration: configuration)
+                try await recorder.startRecordingWithPermission(configuration: configuration)
             }
             errorMessage = nil
         } catch {
