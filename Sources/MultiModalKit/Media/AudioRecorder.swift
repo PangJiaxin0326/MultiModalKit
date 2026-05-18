@@ -57,8 +57,15 @@ public struct AudioRecordingConfiguration: Equatable, Sendable {
 public final class AudioRecorder: NSObject, ObservableObject {
     @Published public private(set) var isRecording = false
     @Published public private(set) var currentRecordingURL: URL?
+    @Published public private(set) var averagePowerDecibels: Float = -60
+    @Published public private(set) var peakPowerDecibels: Float = -60
+    @Published public private(set) var averagePowerLevel: Double = 0
+    @Published public private(set) var peakPowerLevel: Double = 0
 
     private var recorder: AVAudioRecorder?
+    private var meteringTask: Task<Void, Never>?
+
+    private static let silentPower: Float = -60
 
     public override init() {
         super.init()
@@ -80,6 +87,7 @@ public final class AudioRecorder: NSObject, ObservableObject {
         try Self.prepareAudioSessionIfNeeded()
 
         let recorder = try AVAudioRecorder(url: destinationURL, settings: configuration.recorderSettings)
+        recorder.isMeteringEnabled = true
         recorder.prepareToRecord()
         guard recorder.record() else {
             throw MultiModalKitError.recordingFailed("AVAudioRecorder did not start.")
@@ -88,6 +96,7 @@ public final class AudioRecorder: NSObject, ObservableObject {
         self.recorder = recorder
         currentRecordingURL = destinationURL
         isRecording = true
+        startMetering()
         return destinationURL
     }
 
@@ -106,6 +115,7 @@ public final class AudioRecorder: NSObject, ObservableObject {
             return currentRecordingURL
         }
 
+        stopMetering(resetLevels: true)
         recorder?.stop()
         recorder = nil
         isRecording = false
@@ -115,6 +125,7 @@ public final class AudioRecorder: NSObject, ObservableObject {
 
     public func cancelRecording(removeFile: Bool = true) {
         let url = currentRecordingURL
+        stopMetering(resetLevels: true)
         recorder?.stop()
         recorder = nil
         currentRecordingURL = nil
@@ -124,6 +135,53 @@ public final class AudioRecorder: NSObject, ObservableObject {
         if removeFile, let url {
             try? FileManager.default.removeItem(at: url)
         }
+    }
+
+    private func startMetering() {
+        stopMetering(resetLevels: false)
+        refreshMeters()
+        meteringTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled else { return }
+                self?.refreshMeters()
+            }
+        }
+    }
+
+    private func stopMetering(resetLevels: Bool) {
+        meteringTask?.cancel()
+        meteringTask = nil
+        if resetLevels {
+            resetMeters()
+        }
+    }
+
+    private func refreshMeters() {
+        guard let recorder, isRecording else {
+            resetMeters()
+            return
+        }
+
+        recorder.updateMeters()
+        averagePowerDecibels = max(Self.silentPower, recorder.averagePower(forChannel: 0))
+        peakPowerDecibels = max(Self.silentPower, recorder.peakPower(forChannel: 0))
+        averagePowerLevel = Self.normalizedPower(from: averagePowerDecibels)
+        peakPowerLevel = Self.normalizedPower(from: peakPowerDecibels)
+    }
+
+    private func resetMeters() {
+        averagePowerDecibels = Self.silentPower
+        peakPowerDecibels = Self.silentPower
+        averagePowerLevel = 0
+        peakPowerLevel = 0
+    }
+
+    private static func normalizedPower(from decibels: Float) -> Double {
+        guard decibels.isFinite else { return 0 }
+        let clamped = min(0, max(silentPower, decibels))
+        let normalized = Double((clamped - silentPower) / -silentPower)
+        return sqrt(normalized)
     }
 
     private static func temporaryRecordingURL(format: AudioRecordingFormat) -> URL {
@@ -144,5 +202,9 @@ public final class AudioRecorder: NSObject, ObservableObject {
         #if os(iOS) || os(visionOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
+    }
+
+    deinit {
+        meteringTask?.cancel()
     }
 }
