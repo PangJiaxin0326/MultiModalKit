@@ -16,13 +16,22 @@ let package = Package(
             targets: ["MultiModalKit"]
         ),
     ],
+    dependencies: [
+        .package(url: "https://github.com/PangJiaxin0326/AIToolKit.git", branch: "main"),
+    ],
     targets: [
         .target(
-            name: "MultiModalKit"
+            name: "MultiModalKit",
+            dependencies: [
+                .product(name: "AIToolKit", package: "AIToolKit"),
+            ]
         ),
         .testTarget(
             name: "MultiModalKitTests",
-            dependencies: ["MultiModalKit"]
+            dependencies: [
+                "MultiModalKit",
+                .product(name: "AIToolKit", package: "AIToolKit"),
+            ]
         ),
     ],
     swiftLanguageModes: [.v6]
