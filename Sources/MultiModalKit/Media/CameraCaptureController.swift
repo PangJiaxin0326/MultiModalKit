@@ -39,6 +39,7 @@ public final class CameraCaptureController: NSObject, ObservableObject {
 
     public let session = AVCaptureSession()
 
+    private let sessionQueue = DispatchQueue(label: "MultiModalKit.CameraCaptureController.session")
     private let photoOutput = AVCapturePhotoOutput()
     private var photoDelegate: PhotoCaptureDelegate?
 
@@ -70,23 +71,37 @@ public final class CameraCaptureController: NSObject, ObservableObject {
     }
 
     public func start() {
-        guard isConfigured, !session.isRunning else {
-            isRunning = session.isRunning
-            return
-        }
-
-        session.startRunning()
-        isRunning = session.isRunning
-    }
-
-    public func stop() {
-        guard session.isRunning else {
+        guard isConfigured else {
             isRunning = false
             return
         }
 
-        session.stopRunning()
-        isRunning = false
+        sessionQueue.async { [session] in
+            guard !session.isRunning else {
+                Task { @MainActor in
+                    self.isRunning = true
+                }
+                return
+            }
+
+            session.startRunning()
+
+            Task { @MainActor in
+                self.isRunning = session.isRunning
+            }
+        }
+    }
+
+    public func stop() {
+        sessionQueue.async { [session] in
+            if session.isRunning {
+                session.stopRunning()
+            }
+
+            Task { @MainActor in
+                self.isRunning = false
+            }
+        }
     }
 
     public func capturePhoto(to url: URL? = nil) async throws -> CapturedImage {
