@@ -76,32 +76,60 @@ public final class CameraCaptureController: NSObject, ObservableObject {
             return
         }
 
-        sessionQueue.async { [session] in
-            guard !session.isRunning else {
-                Task { @MainActor in
-                    self.isRunning = true
-                }
-                return
-            }
-
-            session.startRunning()
-
-            Task { @MainActor in
-                self.isRunning = session.isRunning
-            }
+        Task {
+            await startRunning()
         }
     }
 
-    public func stop() {
-        sessionQueue.async { [session] in
-            if session.isRunning {
-                session.stopRunning()
-            }
+    public func start() async {
+        guard isConfigured else {
+            isRunning = false
+            return
+        }
 
-            Task { @MainActor in
-                self.isRunning = false
+        await startRunning()
+    }
+
+    public func stop() {
+        Task {
+            await stopRunning()
+        }
+    }
+
+    public func stop() async {
+        await stopRunning()
+    }
+
+    private func startRunning() async {
+        let session = session
+        let sessionQueue = sessionQueue
+
+        let running = await withCheckedContinuation { continuation in
+            sessionQueue.async {
+                if !session.isRunning {
+                    session.startRunning()
+                }
+                continuation.resume(returning: session.isRunning)
             }
         }
+
+        isRunning = running
+    }
+
+    private func stopRunning() async {
+        let session = session
+        let sessionQueue = sessionQueue
+
+        await withCheckedContinuation { continuation in
+            sessionQueue.async {
+                if session.isRunning {
+                    session.stopRunning()
+                }
+                continuation.resume()
+            }
+        }
+
+        isRunning = false
     }
 
     public func capturePhoto(to url: URL? = nil) async throws -> CapturedImage {

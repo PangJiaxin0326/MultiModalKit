@@ -57,7 +57,7 @@ public struct CameraCaptureView: View {
         do {
             try await PermissionCenter.require(.camera)
             try controller.configure()
-            controller.start()
+            await controller.start()
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
