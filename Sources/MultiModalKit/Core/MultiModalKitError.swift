@@ -13,6 +13,8 @@ public enum MultiModalKitError: Error, Equatable, LocalizedError, Sendable {
     case speechUnavailable
     case audioConversionFailed
     case imageDataUnavailable
+    case modelLoadFailed(String)
+    case objectDetectionFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -40,6 +42,10 @@ public enum MultiModalKitError: Error, Equatable, LocalizedError, Sendable {
             "Microphone audio could not be converted for analysis."
         case .imageDataUnavailable:
             "Image data is unavailable."
+        case .modelLoadFailed(let reason):
+            "Model could not be loaded: \(reason)"
+        case .objectDetectionFailed(let reason):
+            "Object detection failed: \(reason)"
         }
     }
 }
