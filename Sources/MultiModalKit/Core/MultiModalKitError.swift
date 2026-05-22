@@ -11,6 +11,7 @@ public enum MultiModalKitError: Error, Equatable, LocalizedError, Sendable {
     case unsupportedSpeechLocale(String)
     case speechAssetsUnavailable
     case speechUnavailable
+    case audioConversionFailed
     case imageDataUnavailable
 
     public var errorDescription: String? {
@@ -35,6 +36,8 @@ public enum MultiModalKitError: Error, Equatable, LocalizedError, Sendable {
             "Speech model assets are unavailable."
         case .speechUnavailable:
             "Speech transcription is unavailable on this device."
+        case .audioConversionFailed:
+            "Microphone audio could not be converted for analysis."
         case .imageDataUnavailable:
             "Image data is unavailable."
         }
