@@ -25,7 +25,7 @@ public struct CapturePhotoTool: Tool {
     public static let name = "capture_photo"
     public static let description =
         "Captures a still photo from the device camera and saves it to disk."
-    public static let schema = ToolSchema.object(
+    public static let inputSchema = ToolSchema.object(
         properties: [
             "outputPath": .string(
                 description: "Optional absolute file path to save the photo to."
@@ -40,7 +40,7 @@ public struct CapturePhotoTool: Tool {
         self.controller = controller
     }
 
-    public func invoke(_ input: Input, in context: ToolContext) async throws -> Output {
+    public func call(_ input: Input, in context: ToolContext) async throws -> Output {
         try await PermissionCenter.require(.camera)
         try await controller.configure()
         await controller.start()

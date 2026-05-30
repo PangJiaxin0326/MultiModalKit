@@ -27,7 +27,7 @@ public struct ImportPhotoTool: Tool {
     public static let description =
         "Imports an image file from disk, copying it into the app's working "
         + "directory and reporting its content type and size."
-    public static let schema = ToolSchema.object(
+    public static let inputSchema = ToolSchema.object(
         properties: [
             "imagePath": .string(
                 description: "Absolute file path to the image to import."
@@ -38,7 +38,7 @@ public struct ImportPhotoTool: Tool {
 
     public init() {}
 
-    public func invoke(_ input: Input, in context: ToolContext) async throws -> Output {
+    public func call(_ input: Input, in context: ToolContext) async throws -> Output {
         let service = PhotoLibraryService()
         let photo = try service.loadPhoto(from: URL(filePath: input.imagePath))
         return Output(

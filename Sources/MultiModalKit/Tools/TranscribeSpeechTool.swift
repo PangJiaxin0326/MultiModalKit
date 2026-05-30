@@ -31,7 +31,7 @@ public struct TranscribeSpeechTool: Tool {
     public static let description =
         "Listens to the microphone and transcribes a single spoken utterance, "
         + "ending after a sustained pause in speech."
-    public static let schema = ToolSchema.object(
+    public static let inputSchema = ToolSchema.object(
         properties: [
             "localeIdentifier": .string(
                 description: "Optional BCP-47 locale, e.g. 'en-US'. Defaults to the device locale."
@@ -50,7 +50,7 @@ public struct TranscribeSpeechTool: Tool {
 
     public init() {}
 
-    public func invoke(_ input: Input, in context: ToolContext) async throws -> Output {
+    public func call(_ input: Input, in context: ToolContext) async throws -> Output {
         var configuration = LiveSpeechConfiguration()
         if let identifier = input.localeIdentifier {
             configuration.locale = Locale(identifier: identifier)

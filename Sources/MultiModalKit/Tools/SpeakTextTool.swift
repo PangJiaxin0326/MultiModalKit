@@ -23,7 +23,7 @@ public struct SpeakTextTool: Tool {
     public static let description =
         "Speaks the given text aloud with on-device text-to-speech. "
         + "Returns once playback finishes."
-    public static let schema = ToolSchema.object(
+    public static let inputSchema = ToolSchema.object(
         properties: [
             "text": .string(description: "The text to speak aloud."),
         ],
@@ -32,7 +32,7 @@ public struct SpeakTextTool: Tool {
 
     public init() {}
 
-    public func invoke(_ input: Input, in context: ToolContext) async throws -> Output {
+    public func call(_ input: Input, in context: ToolContext) async throws -> Output {
         let synthesizer = await SpeechSynthesizer()
         await synthesizer.speak(input.text)
         return Output(spokenText: input.text)

@@ -25,7 +25,7 @@ public struct TranscribeAudioFileTool: Tool {
     public static let description =
         "Transcribes spoken audio from an audio file on disk into text "
         + "using on-device speech recognition."
-    public static let schema = ToolSchema.object(
+    public static let inputSchema = ToolSchema.object(
         properties: [
             "audioPath": .string(
                 description: "Absolute file path to the audio file (m4a, wav, ...)."
@@ -39,7 +39,7 @@ public struct TranscribeAudioFileTool: Tool {
 
     public init() {}
 
-    public func invoke(_ input: Input, in context: ToolContext) async throws -> Output {
+    public func call(_ input: Input, in context: ToolContext) async throws -> Output {
         let service = SpeechTranscriptionService()
         let locale = input.localeIdentifier.map { Locale(identifier: $0) } ?? .current
         let result = try await service.transcribeAudioFile(

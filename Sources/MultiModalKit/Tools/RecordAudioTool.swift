@@ -39,7 +39,7 @@ public struct RecordAudioTool: Tool {
         "Controls microphone recording. Call with action 'start' to begin, "
         + "'stop' to finish and keep the file, 'cancel' to discard it, or "
         + "'status' to query. Recording continues across calls until stopped."
-    public static let schema = ToolSchema.object(
+    public static let inputSchema = ToolSchema.object(
         properties: [
             "action": .string(
                 description: "One of: 'start', 'stop', 'cancel', 'status'."
@@ -57,7 +57,7 @@ public struct RecordAudioTool: Tool {
         self.recorder = recorder
     }
 
-    public func invoke(_ input: Input, in context: ToolContext) async throws -> Output {
+    public func call(_ input: Input, in context: ToolContext) async throws -> Output {
         switch input.action {
         case .start:
             let destination = input.outputPath.map { URL(filePath: $0) }

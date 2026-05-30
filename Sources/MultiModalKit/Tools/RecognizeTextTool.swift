@@ -42,7 +42,7 @@ public struct RecognizeTextTool: Tool {
     public static let name = "recognize_text"
     public static let description =
         "Extracts text from an image file on disk using on-device OCR."
-    public static let schema = ToolSchema.object(
+    public static let inputSchema = ToolSchema.object(
         properties: [
             "imagePath": .string(
                 description: "Absolute file path to the image to read text from."
@@ -59,7 +59,7 @@ public struct RecognizeTextTool: Tool {
 
     public init() {}
 
-    public func invoke(_ input: Input, in context: ToolContext) async throws -> Output {
+    public func call(_ input: Input, in context: ToolContext) async throws -> Output {
         var configuration = OCRConfiguration()
         if let level = input.recognitionLevel?.lowercased() {
             configuration.recognitionLevel = level == "fast" ? .fast : .accurate
