@@ -5,10 +5,8 @@ import Testing
 @testable import MultiModalKit
 
 @Suite struct MultiModalToolsTests {
-    @Test func registerAllRegistersEveryTool() async {
-        let registry = ToolRegistry()
-        await MultiModalTools.registerAll(in: registry)
-        let names = await registry.registeredNames()
+    @Test @MainActor func allExposesEveryTool() {
+        let names = MultiModalTools.all().map(\.name)
 
         #expect(names == [
             "recognize_text",
@@ -40,21 +38,7 @@ import Testing
         #expect(fields["required"]?.allStrings == ["imagePath"])
     }
 
-    @Test func manifestSubsetsRegisteredTools() async {
-        let registry = ToolRegistry()
-        await MultiModalTools.registerAll(in: registry)
-
-        let subset = await registry.manifest(for: ["speak_text", "import_photo"])
-        #expect(subset.map(\.name) == ["import_photo", "speak_text"])
-
-        let empty = await registry.manifest(for: [])
-        #expect(empty.isEmpty)
-    }
-
-    @Test func importPhotoToolCopiesFileThroughRegistry() async throws {
-        let registry = ToolRegistry()
-        await registry.register(ImportPhotoTool())
-
+    @Test func importPhotoToolCopiesFile() async throws {
         let workDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("mmk-tools-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
@@ -66,12 +50,9 @@ import Testing
 
         let input = ImportPhotoTool.Input(
             imagePath: source.path(percentEncoded: false)
-        ).generatedContent.data()
-        let outputData = try await registry.call(
-            name: "import_photo",
-            jsonArguments: input
-        )
-        let output = try ImportPhotoTool.Output(GeneratedContent(data: outputData))
+        ).generatedContent
+        let outputContent = try await WorkflowExecutor.callTool(ImportPhotoTool(), with: input)
+        let output = try ImportPhotoTool.Output(outputContent)
 
         #expect(output.byteCount == bytes.count)
         #expect(output.contentType == "public.png")
@@ -79,14 +60,11 @@ import Testing
         try? FileManager.default.removeItem(at: URL(filePath: output.importedPath))
     }
 
-    @Test func invokingWithMissingRequiredFieldThrows() async {
-        let registry = ToolRegistry()
-        await registry.register(ImportPhotoTool())
-
-        await #expect(throws: ToolRegistryError.self) {
-            try await registry.call(
-                name: "import_photo",
-                jsonArguments: Data("{}".utf8)
+    @Test func invokingWithMissingRequiredFieldThrows() async throws {
+        await #expect(throws: GenericToolError.self) {
+            try await WorkflowExecutor.callTool(
+                ImportPhotoTool(),
+                with: GeneratedContent(json: "{}")
             )
         }
     }
