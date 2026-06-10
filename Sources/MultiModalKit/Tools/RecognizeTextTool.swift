@@ -1,8 +1,10 @@
 import AIToolKit
 import Foundation
+import FoundationModels
 
 /// Extracts text from an image file using on-device OCR.
 public struct RecognizeTextTool: Tool {
+    @Generable
     public struct Input: Codable, Sendable {
         public var imagePath: String
         public var recognitionLevel: String?
@@ -19,12 +21,14 @@ public struct RecognizeTextTool: Tool {
         }
     }
 
+    @Generable
     public struct Output: Codable, Sendable {
+        @Generable
         public struct Observation: Codable, Sendable {
             public var text: String
-            public var confidence: Float
+            public var confidence: Double
 
-            public init(text: String, confidence: Float) {
+            public init(text: String, confidence: Double) {
                 self.text = text
                 self.confidence = confidence
             }
@@ -39,27 +43,16 @@ public struct RecognizeTextTool: Tool {
         }
     }
 
-    public static let name = "recognize_text"
-    public static let description =
+    public static let toolName = "recognize_text"
+    public static let toolDescription =
         "Extracts text from an image file on disk using on-device OCR."
-    public static let inputSchema = ToolSchema.object(
-        properties: [
-            "imagePath": .string(
-                description: "Absolute file path to the image to read text from."
-            ),
-            "recognitionLevel": .string(
-                description: "Accuracy mode: 'fast' or 'accurate' (the default)."
-            ),
-            "languages": .array(
-                of: .string(description: "A BCP-47 language tag, e.g. 'en-US'.")
-            ),
-        ],
-        required: ["imagePath"]
-    )
+
+    public var name: String { Self.toolName }
+    public var description: String { Self.toolDescription }
 
     public init() {}
 
-    public func call(_ input: Input, in context: ToolContext) async throws -> Output {
+    public func call(arguments input: Input) async throws -> Output {
         var configuration = OCRConfiguration()
         if let level = input.recognitionLevel?.lowercased() {
             configuration.recognitionLevel = level == "fast" ? .fast : .accurate
@@ -74,7 +67,7 @@ public struct RecognizeTextTool: Tool {
         return Output(
             fullText: result.fullText,
             observations: result.observations.map {
-                Output.Observation(text: $0.text, confidence: $0.confidence)
+                Output.Observation(text: $0.text, confidence: Double($0.confidence))
             }
         )
     }

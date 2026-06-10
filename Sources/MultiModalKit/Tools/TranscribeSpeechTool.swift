@@ -1,8 +1,10 @@
 import AIToolKit
 import Foundation
+import FoundationModels
 
 /// Captures one spoken utterance from the microphone and transcribes it.
 public struct TranscribeSpeechTool: Tool {
+    @Generable
     public struct Input: Codable, Sendable {
         public var localeIdentifier: String?
         public var silenceSeconds: Double?
@@ -19,6 +21,7 @@ public struct TranscribeSpeechTool: Tool {
         }
     }
 
+    @Generable
     public struct Output: Codable, Sendable {
         public var transcript: String
 
@@ -27,30 +30,17 @@ public struct TranscribeSpeechTool: Tool {
         }
     }
 
-    public static let name = "transcribe_speech"
-    public static let description =
+    public static let toolName = "transcribe_speech"
+    public static let toolDescription =
         "Listens to the microphone and transcribes a single spoken utterance, "
         + "ending after a sustained pause in speech."
-    public static let inputSchema = ToolSchema.object(
-        properties: [
-            "localeIdentifier": .string(
-                description: "Optional BCP-47 locale, e.g. 'en-US'. Defaults to the device locale."
-            ),
-            "silenceSeconds": ToolSchema(json: [
-                "type": "number",
-                "description": "Seconds of silence after speech that ends capture.",
-            ]),
-            "maxWaitSeconds": ToolSchema(json: [
-                "type": "number",
-                "description": "Give up and return after this long if no speech is heard.",
-            ]),
-        ],
-        required: []
-    )
+
+    public var name: String { Self.toolName }
+    public var description: String { Self.toolDescription }
 
     public init() {}
 
-    public func call(_ input: Input, in context: ToolContext) async throws -> Output {
+    public func call(arguments input: Input) async throws -> Output {
         var configuration = LiveSpeechConfiguration()
         if let identifier = input.localeIdentifier {
             configuration.locale = Locale(identifier: identifier)

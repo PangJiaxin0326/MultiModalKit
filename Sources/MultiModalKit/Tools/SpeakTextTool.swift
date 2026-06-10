@@ -1,8 +1,10 @@
 import AIToolKit
 import Foundation
+import FoundationModels
 
 /// Speaks text aloud using on-device text-to-speech.
 public struct SpeakTextTool: Tool {
+    @Generable
     public struct Input: Codable, Sendable {
         public var text: String
 
@@ -11,6 +13,7 @@ public struct SpeakTextTool: Tool {
         }
     }
 
+    @Generable
     public struct Output: Codable, Sendable {
         public var spokenText: String
 
@@ -19,20 +22,17 @@ public struct SpeakTextTool: Tool {
         }
     }
 
-    public static let name = "speak_text"
-    public static let description =
+    public static let toolName = "speak_text"
+    public static let toolDescription =
         "Speaks the given text aloud with on-device text-to-speech. "
         + "Returns once playback finishes."
-    public static let inputSchema = ToolSchema.object(
-        properties: [
-            "text": .string(description: "The text to speak aloud."),
-        ],
-        required: ["text"]
-    )
+
+    public var name: String { Self.toolName }
+    public var description: String { Self.toolDescription }
 
     public init() {}
 
-    public func call(_ input: Input, in context: ToolContext) async throws -> Output {
+    public func call(arguments input: Input) async throws -> Output {
         let synthesizer = await SpeechSynthesizer()
         await synthesizer.speak(input.text)
         return Output(spokenText: input.text)

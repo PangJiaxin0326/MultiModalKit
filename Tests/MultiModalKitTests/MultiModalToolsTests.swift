@@ -1,5 +1,6 @@
 import AIToolKit
 import Foundation
+import FoundationModels
 import Testing
 @testable import MultiModalKit
 
@@ -20,23 +21,23 @@ import Testing
         ])
     }
 
-    @Test func descriptorExposesNameDescriptionAndSchema() {
-        let descriptor = RecognizeTextTool.descriptor
+    @Test func descriptorExposesNameDescriptionAndSchema() throws {
+        let descriptor = RecognizeTextTool().descriptor
 
         #expect(descriptor.name == "recognize_text")
-        #expect(descriptor.name == RecognizeTextTool.name)
+        #expect(descriptor.name == RecognizeTextTool.toolName)
         #expect(!descriptor.description.isEmpty)
-        #expect(descriptor.inputSchema == RecognizeTextTool.schema.json)
+        #expect(try descriptor.argumentsSchema.jsonString().contains("imagePath"))
+        #expect(try descriptor.outputSchema?.jsonString().contains("fullText") == true)
     }
 
-    @Test func recognizeTextSchemaRequiresImagePath() {
-        guard case let .object(fields) = RecognizeTextTool.schema.json else {
-            Issue.record("schema must be a JSON object")
-            return
-        }
-
-        #expect(fields["type"] == .string("object"))
-        #expect(fields["required"] == .array([.string("imagePath")]))
+    @Test func recognizeTextSchemaRequiresImagePath() throws {
+        let schema = try GeneratedContent(
+            json: RecognizeTextTool.Input.generationSchema.jsonString()
+        )
+        let fields = try #require(schema.objectValue)
+        #expect(fields["type"]?.stringValue == "object")
+        #expect(fields["required"]?.allStrings == ["imagePath"])
     }
 
     @Test func manifestSubsetsRegisteredTools() async {
@@ -63,15 +64,15 @@ import Testing
         let bytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
         try bytes.write(to: source)
 
-        let input = try JSONEncoder().encode(
-            ImportPhotoTool.Input(imagePath: source.path(percentEncoded: false))
-        )
-        let outputData = try await registry.invoke(
+        let input = ImportPhotoTool.Input(
+            imagePath: source.path(percentEncoded: false)
+        ).generatedContent.data()
+        let outputData = try await registry.call(
             name: "import_photo",
-            jsonInput: input,
+            jsonArguments: input,
             context: ToolContext()
         )
-        let output = try JSONDecoder().decode(ImportPhotoTool.Output.self, from: outputData)
+        let output = try ImportPhotoTool.Output(GeneratedContent(data: outputData))
 
         #expect(output.byteCount == bytes.count)
         #expect(output.contentType == "public.png")
@@ -84,9 +85,9 @@ import Testing
         await registry.register(ImportPhotoTool())
 
         await #expect(throws: ToolRegistryError.self) {
-            try await registry.invoke(
+            try await registry.call(
                 name: "import_photo",
-                jsonInput: Data("{}".utf8),
+                jsonArguments: Data("{}".utf8),
                 context: ToolContext()
             )
         }

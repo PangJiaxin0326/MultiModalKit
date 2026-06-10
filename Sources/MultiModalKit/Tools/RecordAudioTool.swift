@@ -1,5 +1,6 @@
 import AIToolKit
 import Foundation
+import FoundationModels
 
 /// Controls a stateful microphone recording session.
 ///
@@ -7,13 +8,14 @@ import Foundation
 /// tool holds the ``AudioRecorder`` it drives. Construct one recorder and reuse
 /// the same `RecordAudioTool` instance for the lifetime of the registry.
 public struct RecordAudioTool: Tool {
-    public enum Action: String, Codable, Sendable {
+    public enum Action: String, Codable, Sendable, CaseIterable {
         case start
         case stop
         case cancel
         case status
     }
 
+    @Generable
     public struct Input: Codable, Sendable {
         public var action: Action
         public var outputPath: String?
@@ -24,6 +26,7 @@ public struct RecordAudioTool: Tool {
         }
     }
 
+    @Generable
     public struct Output: Codable, Sendable {
         public var isRecording: Bool
         public var recordingPath: String?
@@ -34,22 +37,14 @@ public struct RecordAudioTool: Tool {
         }
     }
 
-    public static let name = "record_audio"
-    public static let description =
+    public static let toolName = "record_audio"
+    public static let toolDescription =
         "Controls microphone recording. Call with action 'start' to begin, "
         + "'stop' to finish and keep the file, 'cancel' to discard it, or "
         + "'status' to query. Recording continues across calls until stopped."
-    public static let inputSchema = ToolSchema.object(
-        properties: [
-            "action": .string(
-                description: "One of: 'start', 'stop', 'cancel', 'status'."
-            ),
-            "outputPath": .string(
-                description: "Optional absolute file path for the recording (used by 'start')."
-            ),
-        ],
-        required: ["action"]
-    )
+
+    public var name: String { Self.toolName }
+    public var description: String { Self.toolDescription }
 
     private let recorder: AudioRecorder
 
@@ -57,7 +52,7 @@ public struct RecordAudioTool: Tool {
         self.recorder = recorder
     }
 
-    public func call(_ input: Input, in context: ToolContext) async throws -> Output {
+    public func call(arguments input: Input) async throws -> Output {
         switch input.action {
         case .start:
             let destination = input.outputPath.map { URL(filePath: $0) }
@@ -77,4 +72,30 @@ public struct RecordAudioTool: Tool {
             )
         }
     }
+}
+
+extension RecordAudioTool.Action: Generable {
+    public static var generationSchema: GenerationSchema {
+        do {
+            return try GenerationSchema(
+                root: DynamicGenerationSchema(
+                    name: "RecordAudioAction",
+                    anyOf: Self.allCases.map(\.rawValue)
+                ),
+                dependencies: []
+            )
+        } catch {
+            preconditionFailure("Invalid RecordAudioAction schema: \(error)")
+        }
+    }
+
+    public init(_ content: GeneratedContent) throws {
+        guard let rawValue = content.stringValue,
+              let action = Self(rawValue: rawValue) else {
+            throw GenericToolError(message: "Invalid record audio action.")
+        }
+        self = action
+    }
+
+    public var generatedContent: GeneratedContent { .string(rawValue) }
 }

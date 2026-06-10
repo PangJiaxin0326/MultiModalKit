@@ -1,8 +1,10 @@
 import AIToolKit
 import Foundation
+import FoundationModels
 
 /// Imports an image file into the app's working directory.
 public struct ImportPhotoTool: Tool {
+    @Generable
     public struct Input: Codable, Sendable {
         public var imagePath: String
 
@@ -11,6 +13,7 @@ public struct ImportPhotoTool: Tool {
         }
     }
 
+    @Generable
     public struct Output: Codable, Sendable {
         public var importedPath: String
         public var contentType: String?
@@ -23,22 +26,17 @@ public struct ImportPhotoTool: Tool {
         }
     }
 
-    public static let name = "import_photo"
-    public static let description =
+    public static let toolName = "import_photo"
+    public static let toolDescription =
         "Imports an image file from disk, copying it into the app's working "
         + "directory and reporting its content type and size."
-    public static let inputSchema = ToolSchema.object(
-        properties: [
-            "imagePath": .string(
-                description: "Absolute file path to the image to import."
-            ),
-        ],
-        required: ["imagePath"]
-    )
+
+    public var name: String { Self.toolName }
+    public var description: String { Self.toolDescription }
 
     public init() {}
 
-    public func call(_ input: Input, in context: ToolContext) async throws -> Output {
+    public func call(arguments input: Input) async throws -> Output {
         let service = PhotoLibraryService()
         let photo = try service.loadPhoto(from: URL(filePath: input.imagePath))
         return Output(

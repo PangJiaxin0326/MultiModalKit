@@ -17,7 +17,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/PangJiaxin0326/AIToolKit.git", branch: "main"),
+        .package(path: "../AIToolKit"),
     ],
     targets: [
         .target(
