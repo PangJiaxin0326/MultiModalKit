@@ -69,8 +69,7 @@ import Testing
         ).generatedContent.data()
         let outputData = try await registry.call(
             name: "import_photo",
-            jsonArguments: input,
-            context: ToolContext()
+            jsonArguments: input
         )
         let output = try ImportPhotoTool.Output(GeneratedContent(data: outputData))
 
@@ -87,8 +86,7 @@ import Testing
         await #expect(throws: ToolRegistryError.self) {
             try await registry.call(
                 name: "import_photo",
-                jsonArguments: Data("{}".utf8),
-                context: ToolContext()
+                jsonArguments: Data("{}".utf8)
             )
         }
     }
