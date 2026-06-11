@@ -1,4 +1,4 @@
-@preconcurrency import AVFAudio
+import AVFAudio
 import CoreMedia
 import Foundation
 import Speech

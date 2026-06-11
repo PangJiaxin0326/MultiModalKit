@@ -1,4 +1,4 @@
-@preconcurrency import AVFoundation
+import AVFoundation
 import Combine
 import Foundation
 
@@ -80,24 +80,38 @@ public final class AudioRecorder: NSObject, ObservableObject {
             if let currentRecordingURL {
                 return currentRecordingURL
             }
-            throw MultiModalKitError.recordingFailed("A recording is already in progress.")
+            throw MultiModalKitError.recordingFailed(
+                MultiModalKitLocalization.string("A recording is already in progress.")
+            )
         }
 
         let destinationURL = url ?? Self.temporaryRecordingURL(format: configuration.format)
-        try Self.prepareAudioSessionIfNeeded()
+        let shouldRemoveFileOnFailure = url == nil
 
-        let recorder = try AVAudioRecorder(url: destinationURL, settings: configuration.recorderSettings)
-        recorder.isMeteringEnabled = true
-        recorder.prepareToRecord()
-        guard recorder.record() else {
-            throw MultiModalKitError.recordingFailed("AVAudioRecorder did not start.")
+        do {
+            try Self.prepareAudioSessionIfNeeded()
+
+            let recorder = try AVAudioRecorder(url: destinationURL, settings: configuration.recorderSettings)
+            recorder.isMeteringEnabled = true
+            recorder.prepareToRecord()
+            guard recorder.record() else {
+                throw MultiModalKitError.recordingFailed(
+                    MultiModalKitLocalization.string("AVAudioRecorder did not start.")
+                )
+            }
+
+            self.recorder = recorder
+            currentRecordingURL = destinationURL
+            isRecording = true
+            startMetering()
+            return destinationURL
+        } catch {
+            Self.deactivateAudioSessionIfNeeded()
+            if shouldRemoveFileOnFailure {
+                try? FileManager.default.removeItem(at: destinationURL)
+            }
+            throw error
         }
-
-        self.recorder = recorder
-        currentRecordingURL = destinationURL
-        isRecording = true
-        startMetering()
-        return destinationURL
     }
 
     @discardableResult

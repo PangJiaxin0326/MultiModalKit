@@ -1,4 +1,4 @@
-@preconcurrency import AVFoundation
+import AVFoundation
 import Foundation
 import Photos
 import Speech
@@ -16,6 +16,23 @@ public enum PermissionCenter {
             mapPhotoAuthorizationStatus(PHPhotoLibrary.authorizationStatus(for: .readWrite))
         case .photoLibraryAddOnly:
             mapPhotoAuthorizationStatus(PHPhotoLibrary.authorizationStatus(for: .addOnly))
+        }
+    }
+
+    public static func status(for permissions: [MultiModalPermission]) -> [MultiModalPermission: MultiModalPermissionStatus] {
+        Dictionary(
+            uniqueKeysWithValues: MultiModalPermission.ordered(permissions).map { permission in
+                (permission, status(for: permission))
+            }
+        )
+    }
+
+    public static func states(for permissions: [MultiModalPermission]) -> [MultiModalPermissionState] {
+        MultiModalPermission.ordered(permissions).map { permission in
+            MultiModalPermissionState(
+                permission: permission,
+                status: status(for: permission)
+            )
         }
     }
 
@@ -37,11 +54,26 @@ public enum PermissionCenter {
 
     @discardableResult
     public static func request(_ permissions: [MultiModalPermission]) async -> [MultiModalPermission: MultiModalPermissionStatus] {
-        var results: [MultiModalPermission: MultiModalPermissionStatus] = [:]
-        for permission in permissions {
-            results[permission] = await request(permission)
+        Dictionary(
+            uniqueKeysWithValues: await requestStates(for: permissions).map { state in
+                (state.permission, state.status)
+            }
+        )
+    }
+
+    @discardableResult
+    public static func requestStates(for permissions: [MultiModalPermission]) async -> [MultiModalPermissionState] {
+        var states: [MultiModalPermissionState] = []
+        for permission in MultiModalPermission.ordered(permissions) {
+            let status = await request(permission)
+            states.append(
+                MultiModalPermissionState(
+                    permission: permission,
+                    status: status
+                )
+            )
         }
-        return results
+        return states
     }
 
     public static func require(_ permission: MultiModalPermission) async throws {
@@ -52,17 +84,19 @@ public enum PermissionCenter {
         }
     }
 
+    public static func require(_ permissions: [MultiModalPermission]) async throws {
+        for permission in MultiModalPermission.ordered(permissions) {
+            try await require(permission)
+        }
+    }
+
     private static func requestAVAccess(for mediaType: AVMediaType) async -> MultiModalPermissionStatus {
         let current = AVCaptureDevice.authorizationStatus(for: mediaType)
         guard current == .notDetermined else {
             return mapAVAuthorizationStatus(current)
         }
 
-        let granted = await withCheckedContinuation { continuation in
-            AVCaptureDevice.requestAccess(for: mediaType) { granted in
-                continuation.resume(returning: granted)
-            }
-        }
+        let granted = await AVCaptureDevice.requestAccess(for: mediaType)
 
         return granted ? .authorized : mapAVAuthorizationStatus(AVCaptureDevice.authorizationStatus(for: mediaType))
     }
@@ -86,11 +120,8 @@ public enum PermissionCenter {
             return mapPhotoAuthorizationStatus(current)
         }
 
-        return await withCheckedContinuation { continuation in
-            PHPhotoLibrary.requestAuthorization(for: accessLevel) { status in
-                continuation.resume(returning: mapPhotoAuthorizationStatus(status))
-            }
-        }
+        let status = await PHPhotoLibrary.requestAuthorization(for: accessLevel)
+        return mapPhotoAuthorizationStatus(status)
     }
 
     private static func mapAVAuthorizationStatus(_ status: AVAuthorizationStatus) -> MultiModalPermissionStatus {

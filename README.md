@@ -4,7 +4,8 @@ MultiModalKit bundles common voice, vision, speech, camera, microphone, and phot
 
 ## Capabilities
 
-- Check and request camera, microphone, speech-recognition, and photo-library permissions with `PermissionCenter`.
+- Check, request, and present camera, microphone, speech-recognition, and photo-library permissions with `MultiModalPermission` and `PermissionCenter`.
+- Present a built-in SwiftUI permission sheet with `permissionSheet(_:)` or `multiModalPermissionSheet(_:)`.
 - Transcribe recorded audio with `SpeechTranscriptionService`, built on the iOS/macOS/visionOS 26 SpeechAnalyzer and SpeechTranscriber APIs.
 - Recognize text in images, image data, camera captures, and file URLs with `VisionOCRProcessor`.
 - Capture still images using AVFoundation with `CameraCaptureView`.
@@ -43,6 +44,21 @@ struct CaptureScreen: View {
 ```swift
 let status = PermissionCenter.status(for: .microphone)
 let granted = await PermissionCenter.request(.microphone).isGranted
+let states = PermissionCenter.states(for: [.camera, .microphone, .photoLibraryReadWrite])
+```
+
+```swift
+struct PermissionGatedScreen: View {
+    var body: some View {
+        CaptureScreen()
+            .permissionSheet([
+                .camera,
+                .microphone,
+                .speechRecognition,
+                .photoLibraryReadWrite,
+            ])
+    }
+}
 ```
 
 ```swift

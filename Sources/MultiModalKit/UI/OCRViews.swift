@@ -1,4 +1,4 @@
-@preconcurrency import SwiftUI
+import SwiftUI
 
 @MainActor
 public struct PhotoOCRPickerView: View {
@@ -6,6 +6,8 @@ public struct PhotoOCRPickerView: View {
     @Binding private var ocrResult: OCRResult?
 
     @State private var errorMessage: String?
+    @State private var recognitionTask: Task<Void, Never>?
+    @State private var recognitionTaskID: UUID?
 
     private let processor: VisionOCRProcessor
     private let title: String
@@ -45,16 +47,32 @@ public struct PhotoOCRPickerView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .onDisappear {
+            recognitionTask?.cancel()
+            recognitionTask = nil
+            recognitionTaskID = nil
+        }
     }
 
     private func recognizeText(in photo: PickedPhoto) {
-        Task {
+        recognitionTask?.cancel()
+        let taskID = UUID()
+        recognitionTaskID = taskID
+        recognitionTask = Task {
+            defer {
+                if recognitionTaskID == taskID {
+                    recognitionTask = nil
+                    recognitionTaskID = nil
+                }
+            }
             do {
                 let result = try await processor.recognizeText(in: photo.data)
+                guard !Task.isCancelled, recognitionTaskID == taskID else { return }
                 ocrResult = result
                 onResult?(result)
                 errorMessage = nil
             } catch {
+                guard !Task.isCancelled, recognitionTaskID == taskID else { return }
                 errorMessage = error.localizedDescription
             }
         }
@@ -68,6 +86,8 @@ public struct CameraOCRView: View {
 
     @State private var capturedImage: CapturedImage?
     @State private var errorMessage: String?
+    @State private var recognitionTask: Task<Void, Never>?
+    @State private var recognitionTaskID: UUID?
 
     private let processor: VisionOCRProcessor
     private let onCapture: (@MainActor (CapturedImage) -> Void)?
@@ -120,16 +140,32 @@ public struct CameraOCRView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .onDisappear {
+            recognitionTask?.cancel()
+            recognitionTask = nil
+            recognitionTaskID = nil
+        }
     }
 
     private func recognizeText(in image: CapturedImage) {
-        Task {
+        recognitionTask?.cancel()
+        let taskID = UUID()
+        recognitionTaskID = taskID
+        recognitionTask = Task {
+            defer {
+                if recognitionTaskID == taskID {
+                    recognitionTask = nil
+                    recognitionTaskID = nil
+                }
+            }
             do {
                 let result = try await processor.recognizeText(in: image.data)
+                guard !Task.isCancelled, recognitionTaskID == taskID else { return }
                 ocrResult = result
                 onResult?(result)
                 errorMessage = nil
             } catch {
+                guard !Task.isCancelled, recognitionTaskID == taskID else { return }
                 errorMessage = error.localizedDescription
             }
         }

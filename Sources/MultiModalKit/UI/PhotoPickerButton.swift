@@ -1,6 +1,6 @@
 import Foundation
-@preconcurrency import PhotosUI
-@preconcurrency import SwiftUI
+import PhotosUI
+import SwiftUI
 
 @MainActor
 public struct PhotoPickerButton: View {
@@ -37,7 +37,11 @@ public struct PhotoPickerButton: View {
 
         VStack(alignment: .leading, spacing: 8) {
             PhotosPicker(selection: $selectedItem, matching: .images) {
-                Label(title, systemImage: systemImage)
+                Label {
+                    Text(LocalizedStringKey(title), bundle: .module)
+                } icon: {
+                    Image(systemName: systemImage)
+                }
             }
 
             if let errorMessage {

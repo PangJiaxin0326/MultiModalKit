@@ -8,6 +8,7 @@ public struct SpeechTranscriptionView: View {
 
     @StateObject private var recorder = AudioRecorder()
     @State private var isTranscribing = false
+    @State private var isProcessing = false
     @State private var errorMessage: String?
 
     private let audioConfiguration: AudioRecordingConfiguration
@@ -36,11 +37,17 @@ public struct SpeechTranscriptionView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Button {
-                toggleRecording()
+                Task {
+                    await toggleRecording()
+                }
             } label: {
-                Label(buttonTitle, systemImage: buttonSystemImage)
+                Label {
+                    Text(buttonTitle, bundle: .module)
+                } icon: {
+                    Image(systemName: buttonSystemImage)
+                }
             }
-            .disabled(isTranscribing)
+            .disabled(isTranscribing || isProcessing)
 
             if isTranscribing {
                 ProgressView()
@@ -84,7 +91,14 @@ public struct SpeechTranscriptionView: View {
         }
     }
 
-    private func toggleRecording() {
+    private func toggleRecording() async {
+        guard !isProcessing else {
+            return
+        }
+
+        isProcessing = true
+        defer { isProcessing = false }
+
         do {
             if recorder.isRecording {
                 guard let url = recorder.stopRecording() else {
@@ -93,7 +107,7 @@ public struct SpeechTranscriptionView: View {
                 recordingURL = url
                 transcribe(url)
             } else {
-                try recorder.startRecording(configuration: audioConfiguration)
+                try await recorder.startRecordingWithPermission(configuration: audioConfiguration)
                 errorMessage = nil
             }
         } catch {

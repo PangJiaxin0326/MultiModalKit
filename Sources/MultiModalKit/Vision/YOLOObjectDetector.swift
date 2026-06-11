@@ -55,8 +55,7 @@ public struct ObjectDetectionResult: Equatable, Sendable {
     }
 }
 
-public final class YOLOObjectDetector: @unchecked Sendable {
-    private let model: MLModel
+public final class YOLOObjectDetector {
     private let visionModel: VNCoreMLModel
     private let classLabels: [String]
     private let configuration: YOLOObjectDetectorConfiguration
@@ -93,7 +92,6 @@ public final class YOLOObjectDetector: @unchecked Sendable {
         configuration: YOLOObjectDetectorConfiguration = YOLOObjectDetectorConfiguration()
     ) throws {
         do {
-            self.model = model
             visionModel = try VNCoreMLModel(for: model)
             self.classLabels = classLabels
             self.configuration = configuration
@@ -143,8 +141,17 @@ public final class YOLOObjectDetector: @unchecked Sendable {
 
         let recognizedObjects = observations.compactMap { $0 as? VNRecognizedObjectObservation }
         if !recognizedObjects.isEmpty {
+            let detections = recognizedObjects.compactMap {
+                Self.detectedObject(
+                    from: $0,
+                    minimumConfidence: configuration.confidenceThreshold
+                )
+            }
             return ObjectDetectionResult(
-                detections: recognizedObjects.compactMap(Self.detectedObject(from:)),
+                detections: YOLOv8OutputDecoder.nonMaxSuppressed(
+                    detections,
+                    iouThreshold: configuration.iouThreshold
+                ),
                 imageSize: imageSize
             )
         }
@@ -173,8 +180,12 @@ public final class YOLOObjectDetector: @unchecked Sendable {
         )
     }
 
-    private static func detectedObject(from observation: VNRecognizedObjectObservation) -> DetectedObject? {
+    private static func detectedObject(
+        from observation: VNRecognizedObjectObservation,
+        minimumConfidence: Float
+    ) -> DetectedObject? {
         guard let label = observation.labels.first else { return nil }
+        guard label.confidence >= minimumConfidence else { return nil }
         return DetectedObject(
             label: label.identifier,
             confidence: label.confidence,
@@ -195,8 +206,9 @@ enum YOLOv8OutputDecoder {
             return []
         }
 
+        let reader = MLMultiArrayValueReader(multiArray)
         var detections: [DetectedObject] = []
-        detections.reserveCapacity(64)
+        detections.reserveCapacity(min(layout.candidateCount, 256))
 
         for candidateIndex in 0..<layout.candidateCount {
             var bestClassIndex = 0
@@ -204,7 +216,7 @@ enum YOLOv8OutputDecoder {
 
             for classOffset in 0..<classCount {
                 let confidence = layout.value(
-                    in: multiArray,
+                    in: reader,
                     candidateIndex: candidateIndex,
                     attributeIndex: 4 + classOffset
                 )
@@ -218,10 +230,10 @@ enum YOLOv8OutputDecoder {
                 continue
             }
 
-            let centerX = layout.value(in: multiArray, candidateIndex: candidateIndex, attributeIndex: 0)
-            let centerY = layout.value(in: multiArray, candidateIndex: candidateIndex, attributeIndex: 1)
-            let width = layout.value(in: multiArray, candidateIndex: candidateIndex, attributeIndex: 2)
-            let height = layout.value(in: multiArray, candidateIndex: candidateIndex, attributeIndex: 3)
+            let centerX = layout.value(in: reader, candidateIndex: candidateIndex, attributeIndex: 0)
+            let centerY = layout.value(in: reader, candidateIndex: candidateIndex, attributeIndex: 1)
+            let width = layout.value(in: reader, candidateIndex: candidateIndex, attributeIndex: 2)
+            let height = layout.value(in: reader, candidateIndex: candidateIndex, attributeIndex: 3)
 
             let normalizedRect = normalizedBoundingBox(
                 centerX: centerX,
@@ -247,14 +259,27 @@ enum YOLOv8OutputDecoder {
     }
 
     static func nonMaxSuppressed(_ detections: [DetectedObject], iouThreshold: Float) -> [DetectedObject] {
-        var remaining = detections.sorted { $0.confidence > $1.confidence }
+        let sorted = detections.sorted { $0.confidence > $1.confidence }
+        var isSuppressed = Array(repeating: false, count: sorted.count)
         var selected: [DetectedObject] = []
+        selected.reserveCapacity(sorted.count)
 
-        while let best = remaining.first {
+        for index in sorted.indices where !isSuppressed[index] {
+            let best = sorted[index]
             selected.append(best)
-            remaining.removeFirst()
-            remaining.removeAll { candidate in
-                intersectionOverUnion(best.normalizedBoundingBox, candidate.normalizedBoundingBox) >= CGFloat(iouThreshold)
+
+            let nextIndex = sorted.index(after: index)
+            guard nextIndex < sorted.endIndex else { continue }
+
+            for candidateIndex in nextIndex..<sorted.endIndex where !isSuppressed[candidateIndex] {
+                let candidate = sorted[candidateIndex]
+                guard shouldCompareForSuppression(best, candidate) else {
+                    continue
+                }
+
+                if intersectionOverUnion(best.normalizedBoundingBox, candidate.normalizedBoundingBox) >= CGFloat(iouThreshold) {
+                    isSuppressed[candidateIndex] = true
+                }
             }
         }
 
@@ -277,15 +302,24 @@ enum YOLOv8OutputDecoder {
 
         let normalizedWidth = width / inputWidth
         let normalizedHeight = height / inputHeight
-        let x = (centerX - width / 2) / inputWidth
-        let topY = (centerY - height / 2) / inputHeight
-        let visionY = 1 - topY - normalizedHeight
+        guard normalizedWidth > 0, normalizedHeight > 0 else {
+            return .null
+        }
+
+        let minX = CGFloat((centerX - width / 2) / inputWidth).clamped(to: 0...1)
+        let maxX = CGFloat((centerX + width / 2) / inputWidth).clamped(to: 0...1)
+        let minY = CGFloat(1 - (centerY + height / 2) / inputHeight).clamped(to: 0...1)
+        let maxY = CGFloat(1 - (centerY - height / 2) / inputHeight).clamped(to: 0...1)
+
+        guard maxX > minX, maxY > minY else {
+            return .null
+        }
 
         return CGRect(
-            x: CGFloat(x).clamped(to: 0...1),
-            y: CGFloat(visionY).clamped(to: 0...1),
-            width: CGFloat(normalizedWidth).clamped(to: 0...1),
-            height: CGFloat(normalizedHeight).clamped(to: 0...1)
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY
         )
     }
 
@@ -298,12 +332,49 @@ enum YOLOv8OutputDecoder {
         guard unionArea > 0 else { return 0 }
         return intersectionArea / unionArea
     }
+
+    private static func shouldCompareForSuppression(_ lhs: DetectedObject, _ rhs: DetectedObject) -> Bool {
+        if let lhsClass = lhs.classIndex, let rhsClass = rhs.classIndex {
+            return lhsClass == rhsClass
+        }
+        return lhs.label == rhs.label
+    }
+}
+
+private struct MLMultiArrayValueReader {
+    let multiArray: MLMultiArray
+    let dataPointer: UnsafeMutableRawPointer
+    let dataType: MLMultiArrayDataType
+    let strides: [Int]
+
+    init(_ multiArray: MLMultiArray) {
+        self.multiArray = multiArray
+        dataPointer = multiArray.dataPointer
+        dataType = multiArray.dataType
+        strides = multiArray.strides.map(\.intValue)
+    }
+
+    func value(at offset: Int) -> Float {
+        switch dataType {
+        case .float16:
+            Float(dataPointer.assumingMemoryBound(to: Float16.self)[offset])
+        case .float32:
+            dataPointer.assumingMemoryBound(to: Float.self)[offset]
+        case .double:
+            Float(dataPointer.assumingMemoryBound(to: Double.self)[offset])
+        case .int8:
+            Float(dataPointer.assumingMemoryBound(to: Int8.self)[offset])
+        case .int32:
+            Float(dataPointer.assumingMemoryBound(to: Int32.self)[offset])
+        @unknown default:
+            0
+        }
+    }
 }
 
 private struct YOLOv8TensorLayout {
     let shape: [Int]
     let candidateCount: Int
-    let attributeCount: Int
     let candidateDimension: Int
     let attributeDimension: Int
 
@@ -316,7 +387,6 @@ private struct YOLOv8TensorLayout {
                 self.init(
                     shape: shape,
                     candidateCount: shape[1],
-                    attributeCount: shape[0],
                     candidateDimension: 1,
                     attributeDimension: 0
                 )
@@ -324,7 +394,6 @@ private struct YOLOv8TensorLayout {
                 self.init(
                     shape: shape,
                     candidateCount: shape[0],
-                    attributeCount: shape[1],
                     candidateDimension: 0,
                     attributeDimension: 1
                 )
@@ -336,7 +405,6 @@ private struct YOLOv8TensorLayout {
                 self.init(
                     shape: shape,
                     candidateCount: shape[2],
-                    attributeCount: shape[1],
                     candidateDimension: 2,
                     attributeDimension: 1
                 )
@@ -344,7 +412,6 @@ private struct YOLOv8TensorLayout {
                 self.init(
                     shape: shape,
                     candidateCount: shape[1],
-                    attributeCount: shape[2],
                     candidateDimension: 1,
                     attributeDimension: 2
                 )
@@ -359,34 +426,54 @@ private struct YOLOv8TensorLayout {
     private init(
         shape: [Int],
         candidateCount: Int,
-        attributeCount: Int,
         candidateDimension: Int,
         attributeDimension: Int
     ) {
         self.shape = shape
         self.candidateCount = candidateCount
-        self.attributeCount = attributeCount
         self.candidateDimension = candidateDimension
         self.attributeDimension = attributeDimension
     }
 
-    func value(in multiArray: MLMultiArray, candidateIndex: Int, attributeIndex: Int) -> Float {
-        let indexes: [NSNumber]
+    func value(
+        in reader: MLMultiArrayValueReader,
+        candidateIndex: Int,
+        attributeIndex: Int
+    ) -> Float {
+        guard let offset = offset(
+            candidateIndex: candidateIndex,
+            attributeIndex: attributeIndex,
+            strides: reader.strides
+        ) else {
+            return 0
+        }
+
+        return reader.value(at: offset)
+    }
+
+    private func offset(candidateIndex: Int, attributeIndex: Int, strides: [Int]) -> Int? {
+        guard strides.count == shape.count else {
+            return nil
+        }
+
+        let indexes: [Int]
         switch shape.count {
         case 2:
             indexes = candidateDimension == 0
-                ? [NSNumber(value: candidateIndex), NSNumber(value: attributeIndex)]
-                : [NSNumber(value: attributeIndex), NSNumber(value: candidateIndex)]
+                ? [candidateIndex, attributeIndex]
+                : [attributeIndex, candidateIndex]
         case 3:
             var values = [0, 0, 0]
             values[candidateDimension] = candidateIndex
             values[attributeDimension] = attributeIndex
-            indexes = values.map(NSNumber.init(value:))
+            indexes = values
         default:
-            return 0
+            return nil
         }
 
-        return multiArray[indexes].floatValue
+        return zip(indexes, strides).reduce(0) { offset, valueAndStride in
+            offset + valueAndStride.0 * valueAndStride.1
+        }
     }
 }
 

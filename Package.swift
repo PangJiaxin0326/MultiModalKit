@@ -6,9 +6,9 @@ import PackageDescription
 let package = Package(
     name: "MultiModalKit",
     platforms: [
-        .iOS("26.5"),
-        .macOS("26.5"),
-        .visionOS("26.5"),
+        .iOS("27.0"),
+        .macOS("27.0"),
+        .visionOS("27.0"),
     ],
     products: [
         .library(
@@ -24,6 +24,9 @@ let package = Package(
             name: "MultiModalKit",
             dependencies: [
                 .product(name: "AIToolKit", package: "AIToolKit"),
+            ],
+            resources: [
+                .process("Resources")
             ]
         ),
         .testTarget(

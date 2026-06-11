@@ -1,10 +1,16 @@
-@preconcurrency import AVFoundation
+import AVFoundation
 import SwiftUI
 
 #if os(visionOS)
 struct CameraPreview: View {
     var body: some View {
-        ContentUnavailableView("Camera Unavailable", systemImage: "camera")
+        ContentUnavailableView {
+            Label {
+                Text("Camera Unavailable", bundle: .module)
+            } icon: {
+                Image(systemName: "camera")
+            }
+        }
     }
 }
 #elseif canImport(UIKit)

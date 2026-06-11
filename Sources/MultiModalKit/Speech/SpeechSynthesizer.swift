@@ -1,4 +1,4 @@
-@preconcurrency import AVFoundation
+import AVFoundation
 import Foundation
 
 /// A minimal async wrapper over `AVSpeechSynthesizer`. ``speak(_:)`` suspends

@@ -15,10 +15,14 @@ public final class CameraCaptureController: NSObject, ObservableObject {
     }
 
     public func configure() throws {
-        throw MultiModalKitError.unavailable("Camera photo capture")
+        throw MultiModalKitError.unavailable(MultiModalKitLocalization.string("Camera photo capture"))
     }
 
     public func start() {
+        isRunning = false
+    }
+
+    public func start() async {
         isRunning = false
     }
 
@@ -26,8 +30,12 @@ public final class CameraCaptureController: NSObject, ObservableObject {
         isRunning = false
     }
 
+    public func stop() async {
+        isRunning = false
+    }
+
     public func capturePhoto(to url: URL? = nil) async throws -> CapturedImage {
-        throw MultiModalKitError.unavailable("Camera photo capture")
+        throw MultiModalKitError.unavailable(MultiModalKitLocalization.string("Camera photo capture"))
     }
 }
 #else
@@ -41,7 +49,7 @@ public final class CameraCaptureController: NSObject, ObservableObject {
 
     private let sessionQueue = DispatchQueue(label: "MultiModalKit.CameraCaptureController.session")
     private let photoOutput = AVCapturePhotoOutput()
-    private var photoDelegate: PhotoCaptureDelegate?
+    private var photoDelegates: [UUID: PhotoCaptureDelegate] = [:]
 
     public override init() {
         super.init()
@@ -52,22 +60,37 @@ public final class CameraCaptureController: NSObject, ObservableObject {
             return
         }
 
-        session.beginConfiguration()
-        session.sessionPreset = .photo
-        defer { session.commitConfiguration() }
+        let session = session
+        let photoOutput = photoOutput
 
-        guard let camera = AVCaptureDevice.default(for: .video) else {
-            throw MultiModalKitError.cameraNotFound
+        do {
+            try sessionQueue.sync {
+                session.beginConfiguration()
+                session.sessionPreset = .photo
+                defer { session.commitConfiguration() }
+
+                guard let camera = AVCaptureDevice.default(for: .video) else {
+                    throw MultiModalKitError.cameraNotFound
+                }
+
+                let input = try AVCaptureDeviceInput(device: camera)
+                guard session.canAddInput(input), session.canAddOutput(photoOutput) else {
+                    throw MultiModalKitError.captureFailed(
+                        MultiModalKitLocalization.string(
+                            "The camera input or photo output could not be added."
+                        )
+                    )
+                }
+
+                session.addInput(input)
+                session.addOutput(photoOutput)
+            }
+            isConfigured = true
+            lastError = nil
+        } catch {
+            lastError = error
+            throw error
         }
-
-        let input = try AVCaptureDeviceInput(device: camera)
-        guard session.canAddInput(input), session.canAddOutput(photoOutput) else {
-            throw MultiModalKitError.captureFailed("The camera input or photo output could not be added.")
-        }
-
-        session.addInput(input)
-        session.addOutput(photoOutput)
-        isConfigured = true
     }
 
     public func start() {
@@ -141,16 +164,17 @@ public final class CameraCaptureController: NSObject, ObservableObject {
             .appendingPathComponent("captured-photo-\(UUID().uuidString)")
             .appendingPathExtension("jpg")
 
+        let captureID = UUID()
         return try await withCheckedThrowingContinuation { continuation in
             let settings = AVCapturePhotoSettings()
             let delegate = PhotoCaptureDelegate(destinationURL: destinationURL) { result in
                 Task { @MainActor in
-                    self.photoDelegate = nil
+                    self.photoDelegates[captureID] = nil
                     continuation.resume(with: result)
                 }
             }
 
-            photoDelegate = delegate
+            photoDelegates[captureID] = delegate
             photoOutput.capturePhoto(with: settings, delegate: delegate)
         }
     }

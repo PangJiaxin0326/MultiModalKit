@@ -23,13 +23,27 @@ public struct CameraCaptureView: View {
 
     public var body: some View {
         #if os(visionOS)
-        ContentUnavailableView("Camera Capture Unavailable", systemImage: "camera")
+        ContentUnavailableView {
+            Label {
+                Text("Camera Capture Unavailable", bundle: .module)
+            } icon: {
+                Image(systemName: "camera")
+            }
+        }
         #else
         ZStack(alignment: .bottom) {
             CameraPreview(session: controller.session)
                 .overlay {
                     if let errorMessage {
-                        ContentUnavailableView("Camera Unavailable", systemImage: "camera", description: Text(errorMessage))
+                        ContentUnavailableView {
+                            Label {
+                                Text("Camera Unavailable", bundle: .module)
+                            } icon: {
+                                Image(systemName: "camera")
+                            }
+                        } description: {
+                            Text(errorMessage)
+                        }
                     }
                 }
 

@@ -5,11 +5,5 @@ public enum MultiModalKit {
     public static let packageName = "MultiModalKit"
 
     /// Privacy keys commonly required by apps that use the package's permissioned APIs.
-    public static let requiredPrivacyKeys = [
-        "NSCameraUsageDescription",
-        "NSMicrophoneUsageDescription",
-        "NSSpeechRecognitionUsageDescription",
-        "NSPhotoLibraryUsageDescription",
-        "NSPhotoLibraryAddUsageDescription",
-    ]
+    public static let requiredPrivacyKeys = MultiModalPermission.allCases.map(\.privacyUsageDescriptionKey)
 }
