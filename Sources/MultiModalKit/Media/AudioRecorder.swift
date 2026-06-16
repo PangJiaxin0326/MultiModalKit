@@ -76,21 +76,44 @@ public final class AudioRecorder: NSObject, ObservableObject {
         to url: URL? = nil,
         configuration: AudioRecordingConfiguration = AudioRecordingConfiguration()
     ) throws -> URL {
-        guard !isRecording else {
-            if let currentRecordingURL {
-                return currentRecordingURL
-            }
-            throw MultiModalKitError.recordingFailed(
-                MultiModalKitLocalization.string("A recording is already in progress.")
-            )
+        if let inProgressURL = try recordingInProgressURL() {
+            return inProgressURL
         }
+        try Self.activateAudioSession()
+        return try beginRecording(to: url, configuration: configuration)
+    }
 
+    @discardableResult
+    public func startRecordingWithPermission(
+        to url: URL? = nil,
+        configuration: AudioRecordingConfiguration = AudioRecordingConfiguration()
+    ) async throws -> URL {
+        try await PermissionCenter.require(.microphone)
+        if let inProgressURL = try recordingInProgressURL() {
+            return inProgressURL
+        }
+        try await Self.activateAudioSessionOffMain()
+        return try beginRecording(to: url, configuration: configuration)
+    }
+
+    private func recordingInProgressURL() throws -> URL? {
+        guard isRecording else { return nil }
+        if let currentRecordingURL {
+            return currentRecordingURL
+        }
+        throw MultiModalKitError.recordingFailed(
+            MultiModalKitLocalization.string("A recording is already in progress.")
+        )
+    }
+
+    private func beginRecording(
+        to url: URL?,
+        configuration: AudioRecordingConfiguration
+    ) throws -> URL {
         let destinationURL = url ?? Self.temporaryRecordingURL(format: configuration.format)
         let shouldRemoveFileOnFailure = url == nil
 
         do {
-            try Self.prepareAudioSessionIfNeeded()
-
             let recorder = try AVAudioRecorder(url: destinationURL, settings: configuration.recorderSettings)
             recorder.isMeteringEnabled = true
             recorder.prepareToRecord()
@@ -112,15 +135,6 @@ public final class AudioRecorder: NSObject, ObservableObject {
             }
             throw error
         }
-    }
-
-    @discardableResult
-    public func startRecordingWithPermission(
-        to url: URL? = nil,
-        configuration: AudioRecordingConfiguration = AudioRecordingConfiguration()
-    ) async throws -> URL {
-        try await PermissionCenter.require(.microphone)
-        return try startRecording(to: url, configuration: configuration)
     }
 
     @discardableResult
@@ -204,17 +218,44 @@ public final class AudioRecorder: NSObject, ObservableObject {
             .appendingPathExtension(format.fileExtension)
     }
 
-    private static func prepareAudioSessionIfNeeded() throws {
-        #if os(iOS) || os(visionOS)
+    #if os(iOS) || os(visionOS)
+    /// `setCategory`/`setActive` block the calling thread, so all session work
+    /// runs on this serial queue: activations stay ordered with respect to
+    /// fire-and-forget deactivations without touching the main thread.
+    private nonisolated static let audioSessionQueue = DispatchQueue(
+        label: "MultiModalKit.AudioRecorder.AudioSession"
+    )
+
+    private nonisolated static func configureAndActivateSession() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker])
         try session.setActive(true, options: .notifyOthersOnDeactivation)
+    }
+    #endif
+
+    private nonisolated static func activateAudioSession() throws {
+        #if os(iOS) || os(visionOS)
+        try audioSessionQueue.sync {
+            try configureAndActivateSession()
+        }
         #endif
     }
 
-    private static func deactivateAudioSessionIfNeeded() {
+    private nonisolated static func activateAudioSessionOffMain() async throws {
         #if os(iOS) || os(visionOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            audioSessionQueue.async {
+                continuation.resume(with: Result { try configureAndActivateSession() })
+            }
+        }
+        #endif
+    }
+
+    private nonisolated static func deactivateAudioSessionIfNeeded() {
+        #if os(iOS) || os(visionOS)
+        audioSessionQueue.async {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
         #endif
     }
 
