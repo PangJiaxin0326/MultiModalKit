@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreLocation
 import Foundation
 import Photos
 import Speech
@@ -16,6 +17,8 @@ public enum PermissionCenter {
             mapPhotoAuthorizationStatus(PHPhotoLibrary.authorizationStatus(for: .readWrite))
         case .photoLibraryAddOnly:
             mapPhotoAuthorizationStatus(PHPhotoLibrary.authorizationStatus(for: .addOnly))
+        case .locationWhenInUse, .locationAlways:
+            mapLocationAuthorizationStatus(CLLocationManager().authorizationStatus, for: permission)
         }
     }
 
@@ -49,6 +52,8 @@ public enum PermissionCenter {
             await requestPhotoLibraryAccess(for: .readWrite)
         case .photoLibraryAddOnly:
             await requestPhotoLibraryAccess(for: .addOnly)
+        case .locationWhenInUse, .locationAlways:
+            await requestLocationAccess(for: permission)
         }
     }
 
@@ -124,6 +129,48 @@ public enum PermissionCenter {
         return mapPhotoAuthorizationStatus(status)
     }
 
+    private static func requestLocationAccess(for permission: MultiModalPermission) async -> MultiModalPermissionStatus {
+        let current = CLLocationManager().authorizationStatus
+        // Always can still be *upgraded* from "when in use," so only short-circuit
+        // when the user has made a terminal decision we cannot prompt past.
+        switch current {
+        case .denied, .restricted:
+            return mapLocationAuthorizationStatus(current, for: permission)
+        case .authorizedAlways:
+            return .authorized
+        case .authorizedWhenInUse where permission == .locationWhenInUse:
+            return .authorized
+        default:
+            break
+        }
+
+        let requester = await LocationAuthorizationRequester(target: permission)
+        let resolved = await requester.request()
+        return mapLocationAuthorizationStatus(resolved, for: permission)
+    }
+
+    private static func mapLocationAuthorizationStatus(
+        _ status: CLAuthorizationStatus,
+        for permission: MultiModalPermission
+    ) -> MultiModalPermissionStatus {
+        switch status {
+        case .notDetermined:
+            .notDetermined
+        case .restricted:
+            .restricted
+        case .denied:
+            .denied
+        case .authorizedAlways:
+            .authorized
+        case .authorizedWhenInUse:
+            // "When in use" is full grant for the when-in-use ask, but only a
+            // partial grant when the caller needs always-on background access.
+            permission == .locationAlways ? .limited : .authorized
+        @unknown default:
+            .unavailable
+        }
+    }
+
     private static func mapAVAuthorizationStatus(_ status: AVAuthorizationStatus) -> MultiModalPermissionStatus {
         switch status {
         case .notDetermined:
@@ -168,6 +215,51 @@ public enum PermissionCenter {
             .limited
         @unknown default:
             .unavailable
+        }
+    }
+}
+
+/// Bridges `CLLocationManager`'s delegate callback into a single `async` request.
+/// Kept on the main actor so the manager is created and its delegate fires on the
+/// run loop CoreLocation expects.
+@MainActor
+private final class LocationAuthorizationRequester: NSObject, CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    private let target: MultiModalPermission
+    private var continuation: CheckedContinuation<CLAuthorizationStatus, Never>?
+
+    init(target: MultiModalPermission) {
+        self.target = target
+        super.init()
+        manager.delegate = self
+    }
+
+    func request() async -> CLAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            switch target {
+            case .locationAlways:
+                // visionOS has no "always" authorization; when-in-use is the deepest
+                // grant the platform offers (mapped to `.limited` for this target).
+                #if os(visionOS)
+                manager.requestWhenInUseAuthorization()
+                #else
+                manager.requestAlwaysAuthorization()
+                #endif
+            default:
+                manager.requestWhenInUseAuthorization()
+            }
+        }
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+        MainActor.assumeIsolated {
+            // Wait for the user to make a real choice; ignore the initial callback
+            // that may still report `.notDetermined`.
+            guard status != .notDetermined, let continuation else { return }
+            self.continuation = nil
+            continuation.resume(returning: status)
         }
     }
 }

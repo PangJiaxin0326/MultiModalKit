@@ -34,6 +34,12 @@ public struct LiveSpeechConfiguration: Sendable {
 /// capture an utterance bounded by silence) or ``awaitKeyword(_:)`` (to listen
 /// for a command word), then ``finish()`` or ``cancel()`` to tear it down.
 /// `transcript` and `audioLevel` update live for UI.
+///
+/// The efficient live microphone path (`AVReadOnlyAudioPCMBuffer`, `installAudioTap`,
+/// `AnalyzerInputConverter`) is iOS 27 API. The `SpeechAnalyzer`/`SpeechTranscriber`
+/// engine and `AnalyzerInput` are iOS 26, so on iOS 26 the session falls back to a
+/// classic `installTap` + `AVAudioConverter` capture (gated with `if #available`) and
+/// the feature works there too — no type-level `@available` gate required.
 @MainActor
 @Observable
 public final class LiveSpeechSession {
@@ -47,7 +53,7 @@ public final class LiveSpeechSession {
     @ObservationIgnored private var analyzer: SpeechAnalyzer?
     @ObservationIgnored private var transcriber: SpeechTranscriber?
     @ObservationIgnored private var inputBuilder: AsyncStream<AnalyzerInput>.Continuation?
-    @ObservationIgnored private var tapBuilder: AsyncStream<AVReadOnlyAudioPCMBuffer>.Continuation?
+    @ObservationIgnored private var tapBuilder: AsyncStream<AVAudioPCMBuffer>.Continuation?
     @ObservationIgnored private var levelBuilder: AsyncStream<Double>.Continuation?
     @ObservationIgnored private var resultsTask: Task<Void, Never>?
     @ObservationIgnored private var pipelineTask: Task<Void, Never>?
@@ -60,6 +66,7 @@ public final class LiveSpeechSession {
     @ObservationIgnored private var silenceWaiter: PendingWaiter?
     @ObservationIgnored private var keywordWaiter: PendingKeywordWaiter?
     @ObservationIgnored private var isTorn = false
+    @ObservationIgnored private var isStarting = false
 
     @ObservationIgnored
     private let logger = Logger(subsystem: "com.multimodalkit", category: "LiveSpeech")
@@ -84,13 +91,17 @@ public final class LiveSpeechSession {
     /// Requests permissions, provisions speech assets, and starts the audio
     /// engine + analyzer. Throws before any capture begins on failure.
     public func start() async throws {
-        guard analyzer == nil, !engine.isRunning, !isTorn else {
+        guard analyzer == nil, !engine.isRunning, !isTorn, !isStarting else {
             throw MultiModalKitError.recordingFailed(
                 MultiModalKitLocalization.string("Live speech session has already started.")
             )
         }
 
+        isStarting = true
+        defer { isStarting = false }
+        try Task.checkCancellation()
         try await PermissionCenter.require([.microphone, .speechRecognition])
+        try checkStartIsActive()
 
         guard SpeechTranscriber.isAvailable else {
             throw MultiModalKitError.speechUnavailable
@@ -108,6 +119,7 @@ public final class LiveSpeechSession {
             attributeOptions: []
         )
         try await Self.provisionAssets(for: transcriber)
+        try checkStartIsActive()
 
         do {
             self.transcriber = transcriber
@@ -121,6 +133,7 @@ public final class LiveSpeechSession {
                 throw MultiModalKitError.speechUnavailable
             }
 
+            try checkStartIsActive()
             resultsTask = Task { [weak self] in
                 do {
                     for try await result in transcriber.results {
@@ -137,38 +150,43 @@ public final class LiveSpeechSession {
             let (inputSequence, inputBuilder) = AsyncStream<AnalyzerInput>.makeStream()
             self.inputBuilder = inputBuilder
             try await analyzer.start(inputSequence: inputSequence)
+            try checkStartIsActive()
 
-            let (levelSequence, levelBuilder) = AsyncStream<Double>.makeStream()
+            let (levelSequence, levelBuilder) = AsyncStream<Double>.makeStream(bufferingPolicy: .bufferingNewest(1))
             self.levelBuilder = levelBuilder
 
-            let (tapSequence, tapBuilder) = AsyncStream<AVReadOnlyAudioPCMBuffer>.makeStream()
+            let (tapSequence, tapBuilder) = AsyncStream<AVAudioPCMBuffer>.makeStream()
             self.tapBuilder = tapBuilder
 
             let input = engine.inputNode
             let tapFormat = input.outputFormat(forBus: 0)
-            try input.installAudioTap(onBus: 0, bufferSize: 4096, format: tapFormat) { buffer, _ in
-                // Realtime audio thread: only hand the Sendable read-only
-                // buffer to the pipeline task; metering and conversion run
-                // off this thread.
-                tapBuilder.yield(buffer)
+            // iOS 27 hands the tap a Sendable read-only buffer; iOS 26 uses the classic
+            // mutable-buffer tap. Either way we forward an `AVAudioPCMBuffer` to the
+            // off-thread pipeline, so everything downstream is version-agnostic.
+            if #available(iOS 27, macOS 27, visionOS 27, *) {
+                try input.installAudioTap(onBus: 0, bufferSize: 4096, format: tapFormat) { buffer, _ in
+                    tapBuilder.yield(AVAudioPCMBuffer(copying: buffer))
+                }
+            } else {
+                input.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { buffer, _ in
+                    // The engine reuses the tap buffer; transfer an owned copy.
+                    if let copy = buffer.copy() as? AVAudioPCMBuffer {
+                        tapBuilder.yield(copy)
+                    }
+                }
             }
             hasInputTap = true
 
             pipelineTask = Task.detached {
-                let converter = AnalyzerInputConverter(analyzerFormat: analyzerFormat)
+                let converter = AnalyzerInputPipeline(tapFormat: tapFormat, analyzerFormat: analyzerFormat)
                 for await buffer in tapSequence {
                     levelBuilder.yield(buffer.normalizedPowerLevel())
-                    guard let inputs = try? converter.convert(AVAudioPCMBuffer(copying: buffer), at: nil) else {
-                        continue
-                    }
-                    for analyzerInput in inputs {
+                    for analyzerInput in converter.convert(buffer) {
                         inputBuilder.yield(analyzerInput)
                     }
                 }
-                if let remaining = try? converter.flush() {
-                    for analyzerInput in remaining {
-                        inputBuilder.yield(analyzerInput)
-                    }
+                for analyzerInput in converter.flush() {
+                    inputBuilder.yield(analyzerInput)
                 }
                 inputBuilder.finish()
             }
@@ -183,6 +201,11 @@ public final class LiveSpeechSession {
             cancel()
             throw error
         }
+    }
+
+    private func checkStartIsActive() throws {
+        try Task.checkCancellation()
+        if isTorn { throw CancellationError() }
     }
 
     /// Tears down capture and returns the trimmed final transcript.
@@ -392,19 +415,89 @@ public final class LiveSpeechSession {
     }
 }
 
-private extension AVReadOnlyAudioPCMBuffer {
+private extension AVAudioPCMBuffer {
     /// RMS amplitude mapped to a perceptual `0...1` range.
     func normalizedPowerLevel() -> Double {
-        guard frameLength > 0, case .float(let samples) = channelData(0) else {
+        guard frameLength > 0, let channel = floatChannelData?[0] else {
             return 0
         }
 
+        let count = Int(frameLength)
         var sumOfSquares: Float = 0
-        for index in samples.indices {
-            let sample = samples[index]
+        for index in 0..<count {
+            let sample = channel[index]
             sumOfSquares += sample * sample
         }
-        let rms = (sumOfSquares / Float(samples.count)).squareRoot()
+        let rms = (sumOfSquares / Float(count)).squareRoot()
         return Double(min(1, max(0, rms * 8))).squareRoot()
+    }
+}
+
+/// Turns captured `AVAudioPCMBuffer`s into `AnalyzerInput`s for `SpeechAnalyzer`.
+///
+/// iOS 27 uses the framework's `AnalyzerInputConverter` (handles format conversion and
+/// buffering). iOS 26 has the analyzer + `AnalyzerInput(buffer:)` but not that converter,
+/// so it falls back to an `AVAudioConverter` into the analyzer's format. Created and used
+/// entirely inside one detached pipeline task, so it needs no cross-actor synchronisation.
+private final class AnalyzerInputPipeline {
+    private let analyzerFormat: AVAudioFormat
+    /// `AnalyzerInputConverter` on iOS 27 (stored type-erased so this iOS-26-available type
+    /// has no stored property of an iOS-27 type); `nil` on the iOS 26 fallback path.
+    private let modern: Any?
+    private let legacy: AVAudioConverter?
+
+    init(tapFormat: AVAudioFormat, analyzerFormat: AVAudioFormat) {
+        self.analyzerFormat = analyzerFormat
+        if #available(iOS 27, macOS 27, visionOS 27, *) {
+            self.modern = AnalyzerInputConverter(analyzerFormat: analyzerFormat)
+            self.legacy = nil
+        } else {
+            self.modern = nil
+            self.legacy = tapFormat == analyzerFormat
+                ? nil
+                : AVAudioConverter(from: tapFormat, to: analyzerFormat)
+        }
+    }
+
+    func convert(_ buffer: AVAudioPCMBuffer) -> [AnalyzerInput] {
+        if #available(iOS 27, macOS 27, visionOS 27, *) {
+            guard let converter = modern as? AnalyzerInputConverter else { return [] }
+            return (try? converter.convert(buffer, at: nil)) ?? []
+        }
+        return legacyConvert(buffer)
+    }
+
+    func flush() -> [AnalyzerInput] {
+        if #available(iOS 27, macOS 27, visionOS 27, *) {
+            guard let converter = modern as? AnalyzerInputConverter else { return [] }
+            return (try? converter.flush()) ?? []
+        }
+        return []   // the iOS 26 path converts buffer-by-buffer, so nothing is buffered
+    }
+
+    /// iOS 26: resample into the analyzer's format (when it differs) and wrap as input.
+    private func legacyConvert(_ buffer: AVAudioPCMBuffer) -> [AnalyzerInput] {
+        guard let converter = legacy else {
+            // Already the analyzer's format — feed it straight through.
+            return [AnalyzerInput(buffer: buffer)]
+        }
+        let ratio = analyzerFormat.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1024
+        guard let output = AVAudioPCMBuffer(pcmFormat: analyzerFormat, frameCapacity: capacity) else {
+            return []
+        }
+        var consumed = false
+        var conversionError: NSError?
+        let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
+            if consumed {
+                inputStatus.pointee = .noDataNow
+                return nil
+            }
+            consumed = true
+            inputStatus.pointee = .haveData
+            return buffer
+        }
+        guard status != .error, output.frameLength > 0 else { return [] }
+        return [AnalyzerInput(buffer: output)]
     }
 }

@@ -6,6 +6,8 @@ public enum MultiModalPermission: CaseIterable, Hashable, Identifiable, Sendable
     case speechRecognition
     case photoLibraryReadWrite
     case photoLibraryAddOnly
+    case locationWhenInUse
+    case locationAlways
 
     public var id: Self { self }
 
@@ -21,6 +23,10 @@ public enum MultiModalPermission: CaseIterable, Hashable, Identifiable, Sendable
             MultiModalKitLocalization.string("Photo Library Access")
         case .photoLibraryAddOnly:
             MultiModalKitLocalization.string("Photo Library Add-Only Access")
+        case .locationWhenInUse:
+            MultiModalKitLocalization.string("Location Access")
+        case .locationAlways:
+            MultiModalKitLocalization.string("Always Location Access")
         }
     }
 
@@ -36,6 +42,10 @@ public enum MultiModalPermission: CaseIterable, Hashable, Identifiable, Sendable
             MultiModalKitLocalization.string("photo library")
         case .photoLibraryAddOnly:
             MultiModalKitLocalization.string("photo library add-only access")
+        case .locationWhenInUse:
+            MultiModalKitLocalization.string("location")
+        case .locationAlways:
+            MultiModalKitLocalization.string("always-on location")
         }
     }
 
@@ -51,6 +61,10 @@ public enum MultiModalPermission: CaseIterable, Hashable, Identifiable, Sendable
             "photo.stack.fill"
         case .photoLibraryAddOnly:
             "photo.badge.plus.fill"
+        case .locationWhenInUse:
+            "location.fill"
+        case .locationAlways:
+            "location.circle.fill"
         }
     }
 
@@ -66,6 +80,10 @@ public enum MultiModalPermission: CaseIterable, Hashable, Identifiable, Sendable
             "NSPhotoLibraryUsageDescription"
         case .photoLibraryAddOnly:
             "NSPhotoLibraryAddUsageDescription"
+        case .locationWhenInUse:
+            "NSLocationWhenInUseUsageDescription"
+        case .locationAlways:
+            "NSLocationAlwaysAndWhenInUseUsageDescription"
         }
     }
 
@@ -81,6 +99,10 @@ public enum MultiModalPermission: CaseIterable, Hashable, Identifiable, Sendable
             3
         case .photoLibraryAddOnly:
             4
+        case .locationWhenInUse:
+            5
+        case .locationAlways:
+            6
         }
     }
 

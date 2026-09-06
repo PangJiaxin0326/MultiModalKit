@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "MultiModalKit",
     platforms: [
-        .iOS("27.0"),
+        .iOS("26.0"),
         .macOS("27.0"),
         .visionOS("27.0"),
     ],
@@ -16,15 +16,13 @@ let package = Package(
             targets: ["MultiModalKit"]
         ),
     ],
-    dependencies: [
-        .package(path: "../AIToolKit"),
-    ],
+    // No AIToolKit dependency: the AIToolKit-backed tools that needed it now live in the
+    // separate, strictly-iOS-27 MultiModalAITools package. Keeping MultiModalKit free of
+    // AIToolKit is what lets it stay at the iOS 26 floor (and keeps the iOS-27-only
+    // FoundationModels symbols out of iOS-26 hosts like the Red app).
     targets: [
         .target(
             name: "MultiModalKit",
-            dependencies: [
-                .product(name: "AIToolKit", package: "AIToolKit"),
-            ],
             resources: [
                 .process("Resources")
             ]
@@ -33,7 +31,6 @@ let package = Package(
             name: "MultiModalKitTests",
             dependencies: [
                 "MultiModalKit",
-                .product(name: "AIToolKit", package: "AIToolKit"),
             ]
         ),
     ],

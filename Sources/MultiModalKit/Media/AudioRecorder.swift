@@ -63,6 +63,8 @@ public final class AudioRecorder: NSObject, ObservableObject {
     @Published public private(set) var peakPowerLevel: Double = 0
 
     private var recorder: AVAudioRecorder?
+    private var isStarting = false
+    private var startCancelled = false
     private var meteringTask: Task<Void, Never>?
 
     private static let silentPower: Float = -60
@@ -76,11 +78,26 @@ public final class AudioRecorder: NSObject, ObservableObject {
         to url: URL? = nil,
         configuration: AudioRecordingConfiguration = AudioRecordingConfiguration()
     ) throws -> URL {
+        guard !isStarting else {
+            throw MultiModalKitError.recordingFailed("A recording is already starting.")
+        }
         if let inProgressURL = try recordingInProgressURL() {
             return inProgressURL
         }
-        try Self.activateAudioSession()
-        return try beginRecording(to: url, configuration: configuration)
+        let destinationURL = url ?? Self.temporaryRecordingURL(format: configuration.format)
+        let shouldRemoveFileOnFailure = url == nil
+
+        do {
+            let recorder = try Self.startConfiguredRecorderSync(
+                destinationURL: destinationURL,
+                configuration: configuration
+            )
+            attach(recorder: recorder, url: destinationURL)
+            return destinationURL
+        } catch {
+            handleStartFailure(destinationURL: destinationURL, removeFile: shouldRemoveFileOnFailure)
+            throw error
+        }
     }
 
     @discardableResult
@@ -88,12 +105,37 @@ public final class AudioRecorder: NSObject, ObservableObject {
         to url: URL? = nil,
         configuration: AudioRecordingConfiguration = AudioRecordingConfiguration()
     ) async throws -> URL {
-        try await PermissionCenter.require(.microphone)
+        guard !isStarting else {
+            throw MultiModalKitError.recordingFailed("A recording is already starting.")
+        }
         if let inProgressURL = try recordingInProgressURL() {
             return inProgressURL
         }
-        try await Self.activateAudioSessionOffMain()
-        return try beginRecording(to: url, configuration: configuration)
+        isStarting = true
+        startCancelled = false
+        defer { isStarting = false }
+        try Task.checkCancellation()
+        try await PermissionCenter.require(.microphone)
+        try Task.checkCancellation()
+        if startCancelled { throw CancellationError() }
+        let destinationURL = url ?? Self.temporaryRecordingURL(format: configuration.format)
+        let shouldRemoveFileOnFailure = url == nil
+
+        do {
+            let recorder = try await Self.startConfiguredRecorder(
+                destinationURL: destinationURL,
+                configuration: configuration
+            )
+            guard !Task.isCancelled, !startCancelled else {
+                recorder.stop()
+                throw CancellationError()
+            }
+            attach(recorder: recorder, url: destinationURL)
+            return destinationURL
+        } catch {
+            handleStartFailure(destinationURL: destinationURL, removeFile: shouldRemoveFileOnFailure)
+            throw error
+        }
     }
 
     private func recordingInProgressURL() throws -> URL? {
@@ -106,39 +148,23 @@ public final class AudioRecorder: NSObject, ObservableObject {
         )
     }
 
-    private func beginRecording(
-        to url: URL?,
-        configuration: AudioRecordingConfiguration
-    ) throws -> URL {
-        let destinationURL = url ?? Self.temporaryRecordingURL(format: configuration.format)
-        let shouldRemoveFileOnFailure = url == nil
+    private func attach(recorder: sending AVAudioRecorder, url: URL) {
+        self.recorder = recorder
+        currentRecordingURL = url
+        isRecording = true
+        startMetering()
+    }
 
-        do {
-            let recorder = try AVAudioRecorder(url: destinationURL, settings: configuration.recorderSettings)
-            recorder.isMeteringEnabled = true
-            recorder.prepareToRecord()
-            guard recorder.record() else {
-                throw MultiModalKitError.recordingFailed(
-                    MultiModalKitLocalization.string("AVAudioRecorder did not start.")
-                )
-            }
-
-            self.recorder = recorder
-            currentRecordingURL = destinationURL
-            isRecording = true
-            startMetering()
-            return destinationURL
-        } catch {
-            Self.deactivateAudioSessionIfNeeded()
-            if shouldRemoveFileOnFailure {
-                try? FileManager.default.removeItem(at: destinationURL)
-            }
-            throw error
+    private func handleStartFailure(destinationURL: URL, removeFile: Bool) {
+        Self.deactivateAudioSessionIfNeeded()
+        if removeFile {
+            try? FileManager.default.removeItem(at: destinationURL)
         }
     }
 
     @discardableResult
     public func stopRecording() -> URL? {
+        startCancelled = true
         guard isRecording else {
             return currentRecordingURL
         }
@@ -152,6 +178,7 @@ public final class AudioRecorder: NSObject, ObservableObject {
     }
 
     public func cancelRecording(removeFile: Bool = true) {
+        startCancelled = true
         let url = currentRecordingURL
         stopMetering(resetLevels: true)
         recorder?.stop()
@@ -233,21 +260,54 @@ public final class AudioRecorder: NSObject, ObservableObject {
     }
     #endif
 
-    private nonisolated static func activateAudioSession() throws {
+    /// Creates, prepares, and starts the recorder. `prepareToRecord()`/`record()`
+    /// implicitly activate the audio session, so this must never run on the main
+    /// thread; both entry points dispatch it onto `audioSessionQueue`.
+    private nonisolated static func makeAndStartRecorder(
+        destinationURL: URL,
+        configuration: AudioRecordingConfiguration
+    ) throws -> sending AVAudioRecorder {
         #if os(iOS) || os(visionOS)
-        try audioSessionQueue.sync {
-            try configureAndActivateSession()
+        try configureAndActivateSession()
+        #endif
+        let recorder = try AVAudioRecorder(url: destinationURL, settings: configuration.recorderSettings)
+        recorder.isMeteringEnabled = true
+        recorder.prepareToRecord()
+        guard recorder.record() else {
+            throw MultiModalKitError.recordingFailed(
+                MultiModalKitLocalization.string("AVAudioRecorder did not start.")
+            )
         }
+        return recorder
+    }
+
+    private nonisolated static func startConfiguredRecorder(
+        destinationURL: URL,
+        configuration: AudioRecordingConfiguration
+    ) async throws -> sending AVAudioRecorder {
+        #if os(iOS) || os(visionOS)
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AVAudioRecorder, any Error>) in
+            audioSessionQueue.async {
+                continuation.resume(with: Result {
+                    try makeAndStartRecorder(destinationURL: destinationURL, configuration: configuration)
+                })
+            }
+        }
+        #else
+        return try makeAndStartRecorder(destinationURL: destinationURL, configuration: configuration)
         #endif
     }
 
-    private nonisolated static func activateAudioSessionOffMain() async throws {
+    private nonisolated static func startConfiguredRecorderSync(
+        destinationURL: URL,
+        configuration: AudioRecordingConfiguration
+    ) throws -> sending AVAudioRecorder {
         #if os(iOS) || os(visionOS)
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            audioSessionQueue.async {
-                continuation.resume(with: Result { try configureAndActivateSession() })
-            }
+        return try audioSessionQueue.sync {
+            try makeAndStartRecorder(destinationURL: destinationURL, configuration: configuration)
         }
+        #else
+        return try makeAndStartRecorder(destinationURL: destinationURL, configuration: configuration)
         #endif
     }
 

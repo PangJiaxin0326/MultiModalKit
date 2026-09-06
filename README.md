@@ -1,6 +1,8 @@
 # MultiModalKit
 
-MultiModalKit bundles common voice, vision, speech, camera, microphone, and photo-library workflows behind one Swift package for iOS, macOS, and visionOS 26.5 or later.
+MultiModalKit bundles common voice, vision, speech, camera, microphone, and photo-library workflows behind one Swift package for iOS 26, macOS 27, and visionOS 27 or later (Swift 6.3+).
+
+The AIToolKit-backed tools have moved to the separate MultiModalAITools package; this package has no package dependencies. iOS 27 uses the read-only audio tap and AnalyzerInputConverter; iOS 26 retains the AVAudioConverter fallback.
 
 ## Capabilities
 
@@ -24,6 +26,8 @@ The host app remains responsible for adding the relevant usage descriptions to i
 - `NSSpeechRecognitionUsageDescription`
 - `NSPhotoLibraryUsageDescription`
 - `NSPhotoLibraryAddUsageDescription` when requesting add-only photo access
+- `NSLocationWhenInUseUsageDescription` for location access
+- `NSLocationAlwaysAndWhenInUseUsageDescription` as well for background location access
 
 ## Quick Examples
 

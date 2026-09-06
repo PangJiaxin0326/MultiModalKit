@@ -67,19 +67,21 @@ public struct SpeechTranscriptionService: Sendable {
             throw MultiModalKitError.speechUnavailable
         }
 
-        let transcriber = try await makeTranscriber(configuration: configuration)
-        async let collectedResults = collectResults(from: transcriber)
-
         let audioFile = try AVAudioFile(forReading: url)
+        let transcriber = try await makeTranscriber(configuration: configuration)
         let analyzer = SpeechAnalyzer(modules: [transcriber])
-
-        if let lastSample = try await analyzer.analyzeSequence(from: audioFile) {
-            try await analyzer.finalizeAndFinish(through: lastSample)
-        } else {
+        async let collectedResults = collectResults(from: transcriber)
+        do {
+            if let lastSample = try await analyzer.analyzeSequence(from: audioFile) {
+                try await analyzer.finalizeAndFinish(through: lastSample)
+            } else {
+                await analyzer.cancelAndFinishNow()
+            }
+            return try await collectedResults
+        } catch {
             await analyzer.cancelAndFinishNow()
+            throw error
         }
-
-        return try await collectedResults
     }
 
     public func ensureSpeechAssets(

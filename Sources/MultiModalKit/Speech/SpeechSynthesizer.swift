@@ -7,6 +7,7 @@ import Foundation
 public final class SpeechSynthesizer: NSObject {
     private let synthesizer = AVSpeechSynthesizer()
     /// Resumed by the delegate when the current utterance ends.
+    private var utteranceID: ObjectIdentifier?
     private var continuation: CheckedContinuation<Void, Never>?
 
     public override init() {
@@ -20,16 +21,28 @@ public final class SpeechSynthesizer: NSObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        guard !Task.isCancelled else { return }
+        let utterance = AVSpeechUtterance(string: trimmed)
+        let id = ObjectIdentifier(utterance)
+
         // Drop any in-flight utterance before starting a new one.
         stop()
 
         await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                guard !Task.isCancelled else {
+                    continuation.resume()
+                    return
+                }
+                self.utteranceID = id
                 self.continuation = continuation
-                synthesizer.speak(AVSpeechUtterance(string: trimmed))
+                synthesizer.speak(utterance)
             }
         } onCancel: {
-            Task { @MainActor in self.stop() }
+            Task { @MainActor in
+                guard self.utteranceID == id else { return }
+                self.stop()
+            }
         }
     }
 
@@ -44,6 +57,12 @@ public final class SpeechSynthesizer: NSObject {
     private func resume() {
         continuation?.resume()
         continuation = nil
+        utteranceID = nil
+    }
+
+    private func resume(utteranceID: ObjectIdentifier) {
+        guard self.utteranceID == utteranceID else { return }
+        resume()
     }
 }
 
@@ -52,13 +71,15 @@ extension SpeechSynthesizer: AVSpeechSynthesizerDelegate {
         _ synthesizer: AVSpeechSynthesizer,
         didFinish utterance: AVSpeechUtterance
     ) {
-        Task { @MainActor in self.resume() }
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in self.resume(utteranceID: id) }
     }
 
     public nonisolated func speechSynthesizer(
         _ synthesizer: AVSpeechSynthesizer,
         didCancel utterance: AVSpeechUtterance
     ) {
-        Task { @MainActor in self.resume() }
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in self.resume(utteranceID: id) }
     }
 }
